@@ -1,0 +1,67 @@
+name: Get Version
+
+on:
+  workflow_call:
+    inputs:
+      type:
+        required: true
+        type: string
+        description: Type of version. Use release, beta or alpha. (commit is deprecated, please use beta)
+      ref:
+        description: 'The branch, tag or SHA to checkout. When checking out the repository that triggered a workflow, this defaults to the reference or SHA for that event. Otherwise, uses the default branch.'
+        required: false
+        type: string
+        default: ''
+    outputs:
+      version: 
+        description: "Version obtained from git"
+        value: ${{ jobs.get-version.outputs.version }}
+
+env:
+  TYPE: ${{ inputs.type }}
+
+jobs:
+  get-version:
+    name: Get Version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.set-version.outputs.version }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+
+
+    - name: Get latest tag
+      if: ${{ env.TYPE == 'beta'  || env.TYPE == 'alpha' || env.TYPE == 'commit' }}
+      run: |
+        git fetch --depth=1 origin +refs/tags/*:refs/tags/*
+        echo "TAG=$(git describe --tags `git rev-list --tags --max-count=1`)" >> $GITHUB_ENV
+    - name: Set VERSION (beta)
+      if: ${{ env.TYPE == 'beta'  || env.TYPE == 'commit' }}
+      run: |
+        echo "Run number: ${{github.run_number}}"
+        echo "TAG: ${TAG}"
+        echo "VERSION=${TAG:1}-beta.$(echo ${{github.run_number}}).a$(echo ${GITHUB_SHA:0:8})" >> $GITHUB_ENV
+    - name: Set VERSION (alpha)
+      if: ${{ env.TYPE == 'alpha' }}
+      run: |
+        echo "Run number: ${{github.run_number}}"
+        echo "TAG: ${TAG}"
+        echo "VERSION=${TAG:1}-alpha.$(echo ${{github.run_number}}).a$(echo ${GITHUB_SHA:0:8})" >> $GITHUB_ENV
+    - name: Set VERSION (release)
+      if: ${{ env.TYPE == 'release'}}
+      run: | 
+        TAG=${{ github.event.release.tag_name }}
+        echo "TAG: ${TAG}"
+        echo "VERSION=${TAG#v}" >> $GITHUB_ENV
+    - name: Validate VERSION (release)
+      if: ${{ env.TYPE == 'release' }}
+      uses: alice-biometrics/semver-validation-action@master
+      with:
+        version: ${{ env.VERSION }}
+    - name: Set output
+      id: set-version
+      run: |
+        echo "version=$VERSION" >> $GITHUB_OUTPUT

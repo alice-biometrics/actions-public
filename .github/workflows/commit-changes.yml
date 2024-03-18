@@ -1,0 +1,85 @@
+name: Commit Changes
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+        description: Version of the application
+      deploy_timestamp:
+        required: true
+        type: string
+        description: Deploy timestamps (you can obtained with date -u --rfc-3339=seconds)
+      working_directory:
+        required: false
+        type: string
+        default: .
+      target_directory:
+        required: false
+        type: string
+        default: app
+    secrets:
+      github_access_token:
+        required: true
+
+env:
+  VERSION: ${{ inputs.version }}
+  DEPLOY_TIMESTAMP: ${{ inputs.deploy_timestamp }}
+  TARGET_DIRECTORY: ${{inputs.target_directory}}
+
+jobs:
+  commit-changes:
+    name: Commit Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.github_access_token }}
+    - name: Pull changes
+      working-directory: ${{inputs.working_directory}}
+      run: git pull origin main
+    - name: Update VERSION file
+      working-directory: ${{inputs.working_directory}}
+      run: |
+        if [ "$VERSION" != "" ]; then
+          echo ${VERSION} > ${TARGET_DIRECTORY}/VERSION
+        else
+          echo "::error ::Input version cannot be empty"
+          exit 1
+        fi
+    - name: Update DEPLOY file
+      working-directory: ${{inputs.working_directory}}
+      run: |
+        if [ "$DEPLOY_TIMESTAMP" != "" ]; then
+          echo ${DEPLOY_TIMESTAMP} > ${TARGET_DIRECTORY}/DEPLOY
+        else
+          echo "::warning ::Input deploy_timestamp is empty"
+        fi
+    - name: Add to git VERSION file
+      working-directory: ${{inputs.working_directory}}
+      run: git add ${TARGET_DIRECTORY}/VERSION
+    - name: Add to git DEPLOY file
+      working-directory: ${{inputs.working_directory}}
+      run: |
+        if [ "$DEPLOY_TIMESTAMP" != "" ]; then
+           git add ${TARGET_DIRECTORY}/DEPLOY
+        else
+          echo "::warning ::Input deploy_timestamp is empty"
+        fi
+    - name: Commit files
+      run: |
+        if [[ -z "$(git status --porcelain)" ]];
+        then
+          echo "There are no changes to commit";
+        else
+          git config --global user.email "dev@alicebiometrics.com"
+          git config --global user.name "Alice Biometrics"
+          git commit -m "chore: update version to ${VERSION}"
+        fi
+    - name: Push changes
+      uses: alice-biometrics/github-push-action@master
+      with:
+        pull_first: true
+        github_token: ${{ secrets.github_access_token }}

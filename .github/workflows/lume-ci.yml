@@ -1,0 +1,206 @@
+name: Lume CI
+
+on:
+  workflow_call:
+    inputs:
+      language:
+        required: true
+        type: string
+        default: python
+        description: Select the language (Use python or node)
+      python_version:
+        required: false
+        type: string
+        default: "3.10"
+      runs_on:
+        required: false
+        type: string
+        default: ubuntu-latest
+      lume_version:
+        required: false
+        type: string
+        default: latest
+      lume_config_filename:
+        required: false
+        type: string
+        default: lume.yml
+      pre_commands:
+        required: false
+        type: string
+        default: ""
+      post_setup_commands:
+        required: false
+        type: string
+        default: ""
+      post_commands:
+        required: false
+        type: string
+        default: ""
+      use_cache:
+        required: false
+        type: boolean
+        default: true
+      working_directory:
+        required: false
+        type: string
+        default: .
+      use_uv:
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      gke_project:
+        required: false
+      workload_identity:
+        required: false
+      service_account:
+        required: false
+      github_access_token:
+        required: false
+
+env:
+  LUME_CONFIG_FILENAME: ${{ inputs.lume_config_filename}}
+  GITHUB_ACCESS_TOKEN: ${{ secrets.github_access_token}}
+  GKE_PROJECT: ${{ secrets.gke_project}}
+  WORKLOAD_IDENTITY: ${{ secrets.workload_identity }}
+  SERVICE_ACCOUNT: ${{ secrets.service_account }}
+
+jobs:
+  lume-ci:
+    permissions:
+      contents: read
+      id-token: 'write'
+    name: Lume CI
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        if: env.GKE_PROJECT && env.WORKLOAD_IDENTITY && env.SERVICE_ACCOUNT
+        uses: google-github-actions/auth@v2
+        with:
+          token_format: 'access_token'
+          workload_identity_provider: ${{env.WORKLOAD_IDENTITY}}
+          service_account: ${{env.SERVICE_ACCOUNT}}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up Cloud SDK
+        if: env.GKE_PROJECT && env.WORKLOAD_IDENTITY && env.SERVICE_ACCOUNT
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Setup Python (without cache)
+        if: ${{ inputs.language == 'python' && inputs.use_cache == false }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: Setup Python (with cache)
+        if: ${{ inputs.language == 'python' && inputs.use_cache == true }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+          cache: pip
+          cache-dependency-path: '**/*requirements.txt'
+
+      - name: Setup Python (pip)
+        if: ${{ inputs.language == 'python'}}
+        run: | 
+          python -m pip install -U "pip<24"
+
+      - name: Setup Python (uv)
+        if: ${{ inputs.use_uv == true}}
+        run: | # from https://github.com/astral-sh/uv/issues/1386
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          uv venv .venv
+          echo "VIRTUAL_ENV=.venv" >> $GITHUB_ENV
+          echo "$PWD/.venv/bin" >> $GITHUB_PATH
+          mkdir -p $(pip cache dir)
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        if: ${{ inputs.language == 'node' }}
+        with:
+          node-version: 12
+          registry-url: https://npm.pkg.github.com
+          always-auth: true
+          cache: 'yarn'
+
+      - name: Lume
+        working-directory: ${{inputs.working_directory}}
+        run: |
+          version=${{ inputs.lume_version}}
+          if [ "$version" = "latest" ]; then
+              pip install -U lume
+          else
+              pip install -U lume==$version
+          fi
+
+      - name: Pre Commands
+        if: ${{ inputs.pre_commands != '' }}
+        working-directory: ${{inputs.working_directory}}
+        run: |
+          IFS=","
+          read -r -a pre_commands <<< "${{ inputs.pre_commands}}"
+          if [[ ${#pre_commands[@]} > 1 ]]; then
+            for command in ${pre_commands[@]}; do lume -$command; done
+          elif  [[ ${#pre_commands[@]} = 1 ]]; then
+            echo "lume -$pre_commands" | bash -
+          fi
+
+      - name: Install
+        working-directory: ${{inputs.working_directory}}
+        run: lume -install
+
+      - name: Setup (If required)
+        working-directory: ${{inputs.working_directory}}
+        run: lume -setup --no-strict
+
+      - name: Post Setup Commands
+        working-directory: ${{inputs.working_directory}}
+        if: ${{ inputs.post_setup_commands != '' }}
+        run: |
+          IFS="," 
+          read -r -a post_setup_commands <<< "${{ inputs.post_setup_commands}}"
+          if [[ ${#post_setup_commands[@]} > 1 ]]; then
+            for command in ${post_setup_commands[@]}; do lume -$command; done
+          elif  [[ ${#post_setup_commands[@]} = 1 ]]; then
+            echo "lume -$post_setup_commands" | bash -
+          fi
+
+      - name: Check Requirements
+        working-directory: ${{inputs.working_directory}}
+        run: lume -check-requirements
+
+      - name: Static Analysis
+        working-directory: ${{inputs.working_directory}}
+        run: lume -static-analysis
+
+      - name: Lint
+        working-directory: ${{inputs.working_directory}}
+        run: lume -lint
+
+      - name: Unit Tests
+        working-directory: ${{inputs.working_directory}}
+        run: lume -test-unit
+
+      - name: Integration Tests
+        working-directory: ${{inputs.working_directory}}
+        run: lume -test-integration
+
+      - name: Acceptance Tests
+        working-directory: ${{inputs.working_directory}}
+        run: lume -test-acceptance
+
+      - name: Post Commands
+        working-directory: ${{inputs.working_directory}}
+        if: ${{ inputs.post_commands != '' }}
+        run: |
+          IFS="," 
+          read -r -a post_commands <<< "${{ inputs.post_commands}}"
+          if [[ ${#post_commands[@]} > 1 ]]; then
+            for command in ${post_commands[@]}; do lume -$command; done
+          elif  [[ ${#post_commands[@]} = 1 ]]; then
+            echo "lume -$post_commands" | bash -
+          fi
