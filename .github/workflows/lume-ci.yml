@@ -122,7 +122,7 @@ jobs:
         uses: actions/setup-node@v4
         if: ${{ inputs.language == 'node' }}
         with:
-          node-version: 12
+          node-version: 22
           registry-url: https://npm.pkg.github.com
           always-auth: true
           cache: 'yarn'
