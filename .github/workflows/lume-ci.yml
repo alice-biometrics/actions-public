@@ -92,13 +92,13 @@ jobs:
 
       - name: Setup Python (without cache)
         if: ${{ inputs.language == 'python' && inputs.use_cache == false }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ inputs.python_version }}
 
       - name: Setup Python (with cache)
         if: ${{ inputs.language == 'python' && inputs.use_cache == true }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ inputs.python_version }}
           cache: pip
